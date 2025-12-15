@@ -1,0 +1,39 @@
+# Python cache/bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE/editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs and runtime data
+logs/
+!logs/.gitkeep
+recordings/
+!recordings/.gitkeep
+!recordings/recognized/.gitkeep
+!recordings/unrecognized/.gitkeep
+
+# Data and secrets
+secure_config.json
+data/*
+!data/.gitkeep
+
+# Video artifacts
+*.avi
+*.tmp
+*.mp4
+
+# Misc
+*.log
+.lgd-*

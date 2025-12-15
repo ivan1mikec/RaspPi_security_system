@@ -1,6 +1,6 @@
 # Security System (fingerprint + PIN + camera)
 
-Diplomski projekt: lokalni sigurnosni sustav na Raspberry Pi s identifikacijom otiskom prsta, PIN tipkovnicom i kamerom (snima recognized/unrecognized dogadjaje i prikazuje preview u Tkinter GUI-u).
+Lokalni sigurnosni sustav na Raspberry Pi s identifikacijom otiskom prsta, PIN tipkovnicom i kamerom (snima recognized/unrecognized dogadjaje i prikazuje preview u Tkinter GUI-u).
 
 ## Arhitektura
 - `main.py`: pokretanje GUI-a, kamere, LCD-a i tipkovnice, obrada PIN unosa.

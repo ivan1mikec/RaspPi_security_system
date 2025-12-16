@@ -8,7 +8,7 @@ from keypad.keypad_reader import scan_keys
 import camera.camera_module as camera_module
 from camera.camera_module import start_camera_recording
 
-# fingerprint modul i API
+# fingerprint module and API
 import fingerprint.fingerprint_sensor as fingerprint_sensor
 from fingerprint.fingerprint_sensor import (
     fingerprint_loop,
@@ -25,13 +25,13 @@ from config_manager import (
     get_id_for_entered_pin,
 )
 
-# Inicijalizacija sigurnosnih postavki
+# Initialize security settings
 security_init()
 camera_module.set_camera_logger(log_event)
 fingerprint_sensor.set_logger(log_event)
 
 
-# Globalna stanja unosa PIN-a
+# Global PIN entry state
 pin_buffer = ""
 pin_mode = False
 input_locked = False
@@ -41,7 +41,7 @@ def reset_to_home():
     global pin_buffer, pin_mode
     pin_buffer = ""
     pin_mode = False
-    update_lcd("Unesite PIN", "ili skenirajte")
+    update_lcd("Enter PIN", "or scan fingerprint")
 
 
 set_reset_callback(reset_to_home)
@@ -57,11 +57,11 @@ set_input_lock(lock_input)
 
 def update_pin_display():
     stars = "*" * len(pin_buffer)
-    update_lcd("Unos PIN-a:", stars)
+    update_lcd("PIN entry:", stars)
 
 
 def handle_pin_input(key):
-    # Tijekom registracije tipke idu u unos korisničkog PIN-a
+    # During registration, keys are routed to user PIN entry
     if input_locked:
         if is_registering():
             registration_pin_key_input(key)
@@ -74,7 +74,7 @@ def handle_pin_input(key):
         pin_buffer = ""
 
     if key in "0123456789ABCD":
-        # Korisnički PIN-ovi su 1–8 znamenki 0–9
+        # User PINs are 1-8 digits 0-9
         if len(pin_buffer) < 8:
             pin_buffer += key
             update_pin_display()
@@ -84,30 +84,30 @@ def handle_pin_input(key):
         update_pin_display()
 
     elif key == "#":
-        raw_entered = pin_buffer  # npr. "0427"
+        raw_entered = pin_buffer  # e.g., "0427"
 
-        # 1) REGISTRACIJA: pokušaj “pojesti” jednokratni registracijski PIN
+        # 1) REGISTRATION: try to consume a one-time registration PIN
         if raw_entered.isdigit() and len(raw_entered) == 4:
             if consume_registration_pin(raw_entered):
-                log_event("Registracijski PIN prihvaćen", "F")
-                update_lcd("Reg. PIN prihvaćen", "Započni registraciju")
+                log_event("Registration PIN accepted", "F")
+                update_lcd("Reg PIN accepted", "Start enrollment")
                 enable_registration()
                 return
 
-        # 2) ULAZAK: korisnički PIN, tražimo ID
+        # 2) ENTRY: user PIN, look up ID
         user_id = get_id_for_entered_pin(raw_entered)
         if user_id is not None:
-            update_lcd("Pristup odobren", f"ID {user_id}")
-            log_event(f"Pristup odobren korisničkim PIN-om (ID {user_id})", "P")
+            update_lcd("Access granted", f"ID {user_id}")
+            log_event(f"Access granted by user PIN (ID {user_id})", "P")
             try:
-                # Namjerno ostavljeno (ako funkcija ne postoji, bit će zalogirano)
+                # Intentionally left (if function missing, it will be logged)
                 camera_module.notify_recoadgnized_event(user_id)
             except Exception as e:
-                log_event(f"Kamera notify_recognized_event error: {e}", "C")
+                log_event(f"Camera notify_recognized_event error: {e}", "C")
             asyncio.create_task(reset_after_delay())
         else:
-            update_lcd("Pristup odbijen", "")
-            log_event("Pristup odbijen (pogrešan korisnički PIN)", "P")
+            update_lcd("Access denied", "")
+            log_event("Access denied (wrong user PIN)", "P")
             asyncio.create_task(reset_after_delay())
 
 
@@ -123,12 +123,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Pokreni GUI i kameru u pozadini
+    # Start GUI and camera in the background
     threading.Thread(target=start_gui, daemon=True).start()
     threading.Thread(target=start_camera_recording, daemon=True).start()
 
-    # Pokreni sigurnosni sustav
+    # Start the security system
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Prekinuto.")
+        print("Interrupted.")

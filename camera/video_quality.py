@@ -1,4 +1,3 @@
-# video_quality.py
 import os
 import cv2
 import numpy as np
@@ -11,7 +10,7 @@ def _load_haar(paths):
                 return c
     return None
 
-# Pokušaj učitavanja frontal-face kaskade (nije obavezno; bez nje face-score=0)
+# Attempt to load the frontal-face cascade (optional; without it face-score=0)
 HAAR_FACE = _load_haar([
     "/home/student/haarcascade_frontalface_default.xml",
     "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
@@ -19,10 +18,6 @@ HAAR_FACE = _load_haar([
 ])
 
 def _brightness_score(gray):
-    """
-    Širi 'zeleni' raspon: puna ocjena u 0.35–0.75 (dovoljno dobro osvjetljenje).
-    Izvan toga linearni pad prema 0 na rubovima 0.15 i 0.95.
-    """
     m = gray.mean() / 255.0
     if 0.35 <= m <= 0.75:
         return 1.0
@@ -31,19 +26,11 @@ def _brightness_score(gray):
     return max(0.0, (0.95 - m) / (0.95 - 0.75))
 
 def _sharpness_score(gray):
-    """
-    Oštrina preko varijance Laplaciana.
-    Blaža normalizacija: val/200 + blaga kompresija tanh funkcijom.
-    """
     val = cv2.Laplacian(gray, cv2.CV_64F).var()
     raw = val / 200.0
     return float(np.clip(0.85 * np.tanh(raw) + 0.15 * np.clip(raw, 0.0, 1.0), 0.0, 1.0))
 
 def _face_score(frame):
-    """
-    Ako je detektirano lice: bazni boost 0.30 + fino bodovanje (coverage + centriranost).
-    Sweet-spot za coverage ~8–20% kadra; izvan toga linearan pad do 35%.
-    """
     if HAAR_FACE is None:
         return 0.0
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -55,7 +42,7 @@ def _face_score(frame):
     H, W = gray.shape[:2]
     coverage = (w * h) / (W * H)
 
-    # Coverage: idealno 0.08–0.20
+    # Coverage: ideal 0.08-0.20
     if 0.08 <= coverage <= 0.20:
         cov = 1.0
     elif coverage < 0.08:
@@ -63,7 +50,7 @@ def _face_score(frame):
     else:
         cov = max(0.0, (0.35 - coverage) / (0.35 - 0.20))
 
-    # Centriranost
+    # Centering
     cx, cy = x + w / 2.0, y + h / 2.0
     dx, dy = abs(cx - W / 2.0) / (W / 2.0), abs(cy - H / 2.0) / (H / 2.0)
     center = 1.0 - float(np.clip(np.hypot(dx, dy), 0.0, 1.0))
@@ -72,10 +59,6 @@ def _face_score(frame):
     return float(np.clip(0.30 + 0.70 * fine, 0.0, 1.0))
 
 def score_video(path, max_frames=120):
-    """
-    Vraća (score[0..1], detalji). Agregacija: 25% svjetlina + 25% oštrina + 50% lice.
-    Za lice se uzima 90. percentil kroz video (stabilnije od maksimuma).
-    """
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         return 0.0, {"error": "open"}
@@ -102,7 +85,7 @@ def score_video(path, max_frames=120):
 
     B = float(np.median(b))
     S = float(np.median(s))
-    F = float(np.percentile(np.array(f), 90)) if f else 0.0  # stabilnije od max
+    F = float(np.percentile(np.array(f), 90)) if f else 0.0  # more stable than max
 
     score = 0.25 * B + 0.25 * S + 0.50 * F
     return float(np.clip(score, 0.0, 1.0)), {"brightness": B, "sharpness": S, "face": F}

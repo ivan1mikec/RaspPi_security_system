@@ -5,4 +5,3 @@ pyserial
 opencv-python
 numpy
 Pillow
-# Picamera2 obicno instaliraj preko apt paketa python3-picamera2

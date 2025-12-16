@@ -1,47 +1,47 @@
 # Security System (fingerprint + PIN + camera)
 
-Lokalni sigurnosni sustav na Raspberry Pi s identifikacijom otiskom prsta, PIN tipkovnicom i kamerom (snima recognized/unrecognized dogadjaje i prikazuje preview u Tkinter GUI-u).
+Local Raspberry Pi security system with fingerprint identification, keypad entry, and a camera that records recognized/unrecognized events and shows a preview in a Tkinter GUI.
 
-## Arhitektura
-- `main.py`: pokretanje GUI-a, kamere, LCD-a i tipkovnice, obrada PIN unosa.
-- `fingerprint/`: rad sa senzorom otiska (Adafruit Fingerprint), registracija korisnika i PIN-a.
-- `camera/`: Picamera2 + OpenCV, snimanje prepoznatih i neprepoznatih dogadjaja, procjena kvalitete videa.
-- `keypad/`: citanje matricne tipkovnice (gpiozero).
-- `lcd/`: upravljanje I2C LCD-om.
-- `config_manager.py`: sigurno spremanje registracijskih PIN-ova i korisnickih PIN-ova (HMAC/PBKDF2 + pepper), ID lista.
-- `progressive_enroll.py`: pracenje napretka prikupljanja videa po korisniku.
-- `gui.py`: Tkinter sucelje za administraciju, logove i preview kamere.
-- `data/`, `logs/`, `recordings/`: runtime artefakti (ignorirani u git-u).
+## Architecture
+- `main.py`: starts the GUI, camera, LCD, and keypad; handles PIN entry.
+- `fingerprint/`: Adafruit Fingerprint sensor handling, user enrollment, and PIN storage.
+- `camera/`: Picamera2 + OpenCV, recording recognized and unrecognized events, video quality assessment.
+- `keypad/`: matrix keypad reading (gpiozero).
+- `lcd/`: I2C LCD control.
+- `config_manager.py`: secure storage of registration PINs and user PINs (HMAC/PBKDF2 + pepper), ID tracking.
+- `progressive_enroll.py`: tracks per-user video collection progress.
+- `gui.py`: Tkinter admin interface for logs and camera preview.
+- `data/`, `logs/`, `recordings/`: runtime artifacts (git-ignored).
 
-## Hardver
-- Raspberry Pi s kamerom (Picamera2 driver), I2C LCD (PCF8574), matricna tipkovnica, Adafruit fingerprint senzor na /dev/ttyAMA0.
+## Hardware
+- Raspberry Pi with camera (Picamera2 driver), I2C LCD (PCF8574), matrix keypad, Adafruit fingerprint sensor on `/dev/ttyAMA0`.
 
-## Softver / ovisnosti
-- Python 3.11+ na Raspberry Pi OS-u.
-- Sistemski paketi: `sudo apt install python3-picamera2 python3-opencv libatlas-base-dev python3-tk` (tkinter, opencv, picamera2).
-- Python paketi: vidi `requirements.txt` (`pip install -r requirements.txt`).
+## Software / dependencies
+- Python 3.11+ on Raspberry Pi OS.
+- System packages: `sudo apt install python3-picamera2 python3-opencv libatlas-base-dev python3-tk` (tkinter, opencv, picamera2).
+- Python packages: see `requirements.txt` (`pip install -r requirements.txt`).
 
-## Instalacija (preporuceno u repo rootu)
+## Installation (run from repo root)
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\\Scripts\\activate
 pip install -r requirements.txt
 ```
 
-## Pokretanje
+## Run
 ```bash
 python main.py
 ```
-- GUI ce traziti admin korisnicko ime/lozinku (zadano admin/admin, mijenja se u `secure_config.json`).
-- Kamera i GUI se pokrecu u pozadini; LCD prikazuje status PIN unosa.
-- Snimke se spremaju u `recordings/recognized` i `recordings/unrecognized` (ignorirano u git-u).
+- GUI prompts for admin username/password (default admin/admin; change in `secure_config.json`).
+- Camera and GUI start in the background; LCD shows PIN entry status.
+- Recordings are saved in `recordings/recognized` and `recordings/unrecognized` (git-ignored).
 
-## Sigurnosne napomene
-- `secure_config.json` se generira automatski i sadrzi pepper i admin hash -> ne committati (vec u .gitignore).
-- `data/`, `logs/`, `recordings/` sadrze osjetljive i/ili velike datoteke -> ignorirano. Ostavi prazne direktorije pomocu `.gitkeep`.
-- Ako radis na novom uredjaju, pokreni aplikaciju jednom da se kreiraju config/datoteke.
+## Security notes
+- `secure_config.json` is generated automatically and contains the pepper and admin hash -> do not commit (already in .gitignore).
+- `data/`, `logs/`, `recordings/` contain sensitive and/or large files -> ignored. Leave empty directories with `.gitkeep`.
+- On a new device, run the app once to create config/files.
 
-## Struktura direktorija
+## Directory structure
 security_system/
   main.py
   gui.py
@@ -56,11 +56,11 @@ security_system/
     keypad_reader.py
   lcd/
     lcd_controller.py
-  data/              # runtime PIN map, registracijski tokeni (ignored)
+  data/              # runtime PIN map, registration tokens (ignored)
   logs/              # log_*.txt (ignored)
   recordings/        # recognized/unrecognized .avi (ignored)
 
 ## Known setup tips
-- Ako se Picamera2 ne moze importati iz virtualnog okruzenja, instaliraj ga sistemski (`apt`) i pokreni skriptu sa sistemskim Pythonom.
-- OpenCV moze biti tezak na slabijem Pi-u; smanji rezolucije u `camera/camera_module.py` ako je potrebno.
-- Za keypad i LCD provjeri BCM pinove i I2C adresu (PCF8574) prije koristenja.
+- If Picamera2 cannot be imported from the virtual environment, install it system-wide (`apt`) and run the script with the system Python.
+- OpenCV can be heavy on slower Pis; lower resolutions in `camera/camera_module.py` if needed.
+- For keypad and LCD, verify BCM pins and the I2C address (PCF8574) before use.

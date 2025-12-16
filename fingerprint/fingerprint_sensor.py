@@ -6,48 +6,39 @@ from adafruit_fingerprint import Adafruit_Fingerprint
 from lcd.lcd_controller import update_lcd
 import camera.camera_module as camera_module
 
-# Centralizirana sigurnost i spremanje podataka u config_manageru
+# Centralized security and data storage lives in config_manager
 from config_manager import (
-    is_user_pin_taken,   # provjera zauzetosti korisničkog PIN-a
-    add_user_pin,        # spremanje korisničkog PIN-a (PBKDF2+salt+pepper)
-    ids_list,            # čitanje liste ID-jeva
-    ids_add,             # dodavanje ID-ja
-    ids_delete,          # brisanje jednog ID-ja
-    ids_clear,           # brisanje svih ID-jeva
+    is_user_pin_taken,   # check whether a user PIN is already taken
+    add_user_pin,        # store a user PIN (PBKDF2+salt+pepper)
+    ids_list,            # read the list of IDs
+    ids_add,             # add an ID
+    ids_delete,          # delete a single ID
+    ids_clear,           # delete all IDs
 )
 
-# ---------------------------
-# Logger (injicira se izvana)
-# ---------------------------
+# Logger (injected from outside)
 log_event: Callable[[str, str], None] = lambda msg, tag='G': None
 
 
 def set_logger(logger_func: Callable[[str, str], None]) -> None:
-    """Postavi vanjsku log funkciju (npr. gui.log_event)."""
     global log_event
     log_event = logger_func
 
 
-# ---------------------------
-# Definicije statusnih kodova
-# ---------------------------
+# Status code definitions
 FINGERPRINT_OK = 0
 FINGERPRINT_NOFINGER = 2
 FINGERPRINT_NOTFOUND = 9
 
-# ---------------------------
-# UART i instanca senzora
-# ---------------------------
+# UART and sensor instance
 uart = serial.Serial("/dev/ttyAMA0", baudrate=57600, timeout=1)
 finger = Adafruit_Fingerprint(uart)
 
-# Ispravno postavljanje adrese i lozinke
+# Correctly set address and password
 finger.address = [0xFF, 0xFF, 0xFF, 0xFF]
 finger.password = [0x00, 0x00, 0x00, 0x01]
 
-# ---------------------------
-# Rad s ID listom (preko config_managera)
-# ---------------------------
+# Working with the ID list (via config_manager)
 def load_used_ids() -> Iterable[int]:
     return ids_list()
 
@@ -57,7 +48,6 @@ def save_used_id(new_id: int) -> None:
 
 
 def delete_used_id(finger_id: int) -> None:
-    """Prvo briše s uređaja, zatim iz lokalne liste."""
     finger.delete_model(int(finger_id))
     ids_delete(int(finger_id))
 
@@ -70,22 +60,20 @@ def delete_all_fingerprints() -> None:
     if finger.verify_password():
         finger.empty_library()
         ids_clear()
-        log_event("Svi otisci obrisani sa senzora i lokalna lista ID-jeva očišćena", "F")
+        log_event("All fingerprints removed from the sensor and the local ID list cleared", "F")
 
 
-# ---------------------------
-# Stanja registracije
-# ---------------------------
+# Registration state
 register_mode = False
 _reset_to_home: Optional[Callable[[], None]] = None
 _lock_input: Optional[Callable[[bool], None]] = None
 
-# Koraci registracije PIN-a (lokalni state)
-_pin_capture_active = False        # jesmo li u fazi unosa PIN-a
-_pin_capture_buffer = ""           # trenutni unos
-_pin_capture_for_id: Optional[int] = None  # ID kojem pridružujemo PIN
-_pin_confirm_stage = 1             # 1 = prvi unos, 2 = potvrda
-_pin_first_entry = ""              # zapamćeni prvi unos
+# PIN entry steps (local state)
+_pin_capture_active = False        # currently entering a PIN?
+_pin_capture_buffer = ""           # current entry
+_pin_capture_for_id: Optional[int] = None  # ID we are assigning the PIN to
+_pin_confirm_stage = 1             # 1 = first entry, 2 = confirmation
+_pin_first_entry = ""              # remembered first entry
 
 
 def set_reset_callback(func: Callable[[], None]) -> None:
@@ -112,8 +100,8 @@ def cancel_registration() -> None:
     global register_mode
     register_mode = False
     _pin_capture_reset()
-    log_event("Registracija otkazana", "F")
-    update_lcd("Registracija", "otkazana")
+    log_event("Registration cancelled", "F")
+    update_lcd("Registration", "cancelled")
     if _reset_to_home:
         _reset_to_home()
     if _lock_input:
@@ -133,9 +121,7 @@ def is_registering() -> bool:
     return register_mode
 
 
-# ---------------------------
-# Glavna petlja prepoznavanja
-# ---------------------------
+# Main recognition loop
 async def fingerprint_loop() -> None:
     while True:
         await asyncio.sleep(0.1)
@@ -156,19 +142,19 @@ async def fingerprint_loop() -> None:
         confidence = finger.confidence
 
         if user_id not in load_used_ids():
-            log_event(f"Odbijen ID {user_id} nije u lokalnoj listi", "F")
-            update_lcd("Otisak nije", "odobren")
+            log_event(f"Denied ID {user_id}; not in local list", "F")
+            update_lcd("Fingerprint not", "approved")
             await asyncio.sleep(2)
             if _reset_to_home:
                 _reset_to_home()
             continue
 
-        update_lcd("Pristup odobren", f"ID {user_id}")
-        log_event(f"Pristup odobren ID {user_id} (confidence={confidence})", "F")
+        update_lcd("Access granted", f"ID {user_id}")
+        log_event(f"Access granted ID {user_id} (confidence={confidence})", "F")
         try:
             camera_module.notify_recognized_event(user_id)
         except Exception as e:
-            log_event(f"Kamera notify_recognized_event error: {e}", "C")
+            log_event(f"Camera notify_recognized_event error: {e}", "C")
 
         if _lock_input:
             _lock_input(True)
@@ -183,23 +169,14 @@ async def fingerprint_loop() -> None:
             _lock_input(False)
 
 
-# ---------------------------
-# Registracija + unos korisničkog PIN-a (točno 4 znamenke)
-# ---------------------------
+# Registration + user PIN entry (exactly 4 digits)
 async def registration_blocking_loop() -> None:
-    """
-    1) Snimi prst (2 uzorka, model + store)
-    2) Zatraži unos osobnog PIN-a (TOČNO 4 znamenke, 0–9) i POTVRDU:
-       - '*' brisanje znaka
-       - '#' potvrda koraka
-       PIN se sprema kroz config_manager (PBKDF2+salt+pepper).
-    """
     global register_mode, _pin_capture_active, _pin_capture_for_id
     global _pin_confirm_stage, _pin_first_entry, _pin_capture_buffer
 
-    # --- 1) SNIMANJE PRSTA ---
-    update_lcd("Prislonite prst", "za registraciju")
-    log_event("Čekanje prsta za registraciju", "F")
+    # 1) finger capture
+    update_lcd("Place finger", "to enroll")
+    log_event("Waiting for finger to enroll", "F")
 
     while register_mode:
         if finger.get_image() == FINGERPRINT_OK:
@@ -209,17 +186,17 @@ async def registration_blocking_loop() -> None:
         return
 
     if finger.image_2_tz(1) != FINGERPRINT_OK:
-        update_lcd("Greska", "prva slika")
+        update_lcd("Error", "first image")
         await asyncio.sleep(2)
         cancel_registration()
         return
 
-    update_lcd("Maknite prst", "")
+    update_lcd("Remove finger", "")
     while finger.get_image() != FINGERPRINT_NOFINGER:
         await asyncio.sleep(0.1)
 
-    update_lcd("Ponovno prst", "")
-    log_event("Čekanje drugog otiska", "F")
+    update_lcd("Place again", "")
+    log_event("Waiting for second print", "F")
 
     while register_mode:
         if finger.get_image() == FINGERPRINT_OK:
@@ -229,13 +206,13 @@ async def registration_blocking_loop() -> None:
         return
 
     if finger.image_2_tz(2) != FINGERPRINT_OK:
-        update_lcd("Neuspjesno", "ponovite")
+        update_lcd("Unsuccessful", "try again")
         await asyncio.sleep(2)
         cancel_registration()
         return
 
     if finger.create_model() != FINGERPRINT_OK:
-        update_lcd("Greska", "modeliranje")
+        update_lcd("Error", "modeling")
         await asyncio.sleep(2)
         cancel_registration()
         return
@@ -243,23 +220,23 @@ async def registration_blocking_loop() -> None:
     used_ids = load_used_ids()
     location = next((i for i in range(1, 127) if i not in used_ids), None)
     if location is None:
-        update_lcd("Greska", "nema mjesta")
-        log_event("Nema slobodnih ID-jeva prema lokalnoj listi", "F")
+        update_lcd("Error", "no slots")
+        log_event("No free IDs according to local list", "F")
         cancel_registration()
         return
 
     if finger.store_model(location) != FINGERPRINT_OK:
-        update_lcd("Greska", "spremanje")
+        update_lcd("Error", "saving")
         await asyncio.sleep(2)
         cancel_registration()
         return
 
     save_used_id(location)
-    update_lcd("Prst registriran", f"ID {location}")
-    log_event(f"Registriran novi ID {location}", "F")
+    update_lcd("Finger enrolled", f"ID {location}")
+    log_event(f"New ID {location} enrolled", "F")
     await asyncio.sleep(1)
 
-    # --- 2) UNOS OSOBNOG PIN-a + POTVRDA (TOČNO 4) ---
+    # 2) PERSONAL PIN ENTRY + CONFIRMATION (EXACTLY 4) 
     _pin_capture_for_id = location
     _pin_capture_active = True
     _pin_confirm_stage = 1
@@ -267,17 +244,17 @@ async def registration_blocking_loop() -> None:
     _pin_capture_buffer = ""
     _show_pin_prompt()
 
-    # Čekaj da korisnik završi unos (registration_pin_key_input gasi _pin_capture_active)
+    # Wait for user to finish entry (registration_pin_key_input clears _pin_capture_active)
     while register_mode and _pin_capture_active:
         await asyncio.sleep(0.1)
 
     if not register_mode:
-        # otkazano usred unosa
+        # cancelled during entry
         _pin_capture_reset()
         return
 
-    # PIN sačuvan — završetak
-    update_lcd("Registracija OK", f"ID {location}")
+    # PIN saved - finish
+    update_lcd("Registration OK", f"ID {location}")
     await asyncio.sleep(2)
 
     register_mode = False
@@ -291,20 +268,16 @@ async def registration_blocking_loop() -> None:
 def _show_pin_prompt(mask: bool = True) -> None:
     stars = "*" * len(_pin_capture_buffer) if mask else _pin_capture_buffer
     if len(stars) > 16:
-        stars = stars[-16:]  # LCD druga linija max 16 znakova
-    header = "Unesite PIN (4)" if _pin_confirm_stage == 1 else "Potvrdite PIN"
-    update_lcd(header, f"znamenke: {stars}")
+        stars = stars[-16:]  # LCD second line max 16 chars
+    header = "Enter PIN (4)" if _pin_confirm_stage == 1 else "Confirm PIN"
+    update_lcd(header, f"digits: {stars}")
 
 
 def registration_pin_key_input(key: str) -> None:
-    """
-    Poziva se iz main.py za svaku tipku tijekom registracije.
-    Dozvoljene tipke: '0'-'9', '*', '#'
-    """
     global _pin_capture_buffer, _pin_capture_active, _pin_confirm_stage, _pin_first_entry
 
     if not (register_mode and _pin_capture_active):
-        return  # ignoriraj ako nismo u traženju PIN-a
+        return  # ignore if not in PIN entry
 
     if key in "0123456789":
         if len(_pin_capture_buffer) < 4:
@@ -316,53 +289,53 @@ def registration_pin_key_input(key: str) -> None:
         _show_pin_prompt()
 
     elif key == "#":
-        # Potvrda koraka — mora biti točno 4 znamenke
+        # Confirm step - must be exactly 4 digits
         if len(_pin_capture_buffer) != 4:
-            update_lcd("PIN mora biti", "tocno 4 znamenke")
+            update_lcd("PIN must be", "exactly 4 digits")
             asyncio.create_task(_flash_and_prompt_again())
             return
 
         if _pin_confirm_stage == 1:
-            # Spremi prvi unos i traži potvrdu
+            # Store first entry and ask for confirmation
             _pin_first_entry = _pin_capture_buffer
             _pin_capture_buffer = ""
             _pin_confirm_stage = 2
-            update_lcd("Potvrdite PIN", "ponovno unesite")
+            update_lcd("Confirm PIN", "enter again")
             asyncio.create_task(_flash_and_prompt_again())
             return
 
         # _pin_confirm_stage == 2
         if _pin_capture_buffer != _pin_first_entry:
-            # Ne podudara se — ispočetka
-            update_lcd("Ne podudara se", "Pokusajte ponovno")
-            log_event("PIN potvrda neuspješna (neslaganje)", "F")
+            # Mismatch - restart
+            update_lcd("Does not match", "Try again")
+            log_event("PIN confirmation failed (mismatch)", "F")
             _pin_capture_buffer = ""
             _pin_first_entry = ""
             _pin_confirm_stage = 1
             asyncio.create_task(_flash_and_prompt_again())
             return
 
-        # Podudara se — provjeri zauzetost pa spremi
+        # Matches - check availability then store
         try:
             if is_user_pin_taken(_pin_capture_buffer):
-                update_lcd("PIN zauzet", "Odaberite drugi")
-                log_event("Uneseni osobni PIN je zauzet", "F")
-                # resetiraj cijeli proces unosa PIN-a (natrag na korak 1)
+                update_lcd("PIN taken", "Choose another")
+                log_event("Entered personal PIN is already in use", "F")
+                # reset PIN entry process (back to step 1)
                 _pin_capture_buffer = ""
                 _pin_first_entry = ""
                 _pin_confirm_stage = 1
                 asyncio.create_task(_flash_and_prompt_again())
                 return
 
-            # sigurno spremanje PIN-a za ID (PBKDF2 + salt + pepper)
+            # securely store PIN for ID (PBKDF2 + salt + pepper)
             add_user_pin(_pin_capture_for_id, _pin_capture_buffer)
-            log_event(f"Spremljen osobni PIN za ID {_pin_capture_for_id}", "F")
-            _pin_capture_active = False  # signal registracijskom loopu da je gotovo
+            log_event(f"Personal PIN stored for ID {_pin_capture_for_id}", "F")
+            _pin_capture_active = False  # signal to the registration loop that we are done
 
         except ValueError as e:
-            update_lcd("Neispravan PIN", "točno 4 znamenke (0–9)")
-            log_event(f"Greška pri spremanju PIN-a: {e}", "F")
-            # natrag na korak 1
+            update_lcd("Invalid PIN", "exactly 4 digits (0-9)")
+            log_event(f"Error saving PIN: {e}", "F")
+            # back to step 1
             _pin_capture_buffer = ""
             _pin_first_entry = ""
             _pin_confirm_stage = 1
@@ -374,24 +347,22 @@ async def _flash_and_prompt_again() -> None:
     _show_pin_prompt()
 
 
-# ---------------------------
-# Pomoćne operacije nad senzorom
-# ---------------------------
+# Helper operations on the sensor
 def get_registered_ids():
     if not finger.verify_password() or not finger.read_templates():
-        log_event("Neuspjeh: get_registered_ids() – auth/read_templates", "F")
+        log_event("Failure: get_registered_ids() -> auth/read_templates", "F")
         return []
     return finger.templates
 
 
 def delete_fingerprint(finger_id: int) -> bool:
     if not finger.verify_password():
-        log_event("Neuspjeh: delete_fingerprint() – lozinka", "F")
+        log_event("Failure: delete_fingerprint() -> password", "F")
         return False
     if finger.delete_model(int(finger_id)) == FINGERPRINT_OK:
         ids_delete(int(finger_id))
-        log_event(f"Otisak ID {finger_id} obrisan", "F")
+        log_event(f"Fingerprint ID {finger_id} deleted", "F")
         return True
     else:
-        log_event(f"Neuspješno brisanje otiska ID {finger_id}", "F")
+        log_event(f"Failed to delete fingerprint ID {finger_id}", "F")
         return False

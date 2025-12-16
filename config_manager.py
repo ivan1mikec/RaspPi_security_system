@@ -10,16 +10,16 @@ import time
 from pathlib import Path
 from typing import Optional, Set, Dict, Callable
 
-# --------- Putanje ---------
+# Paths 
 BASE_DIR = Path(".")
 DATA_DIR = BASE_DIR / "data"
 CONFIG_FILE = BASE_DIR / "secure_config.json"
 
-VALID_PINS_FILE = DATA_DIR / "valid_registration_pins.txt"  # registracijski PIN-ovi (HMAC)
-PIN_TO_ID_FILE = DATA_DIR / "pin_to_id_map.txt"             # korisnički PIN -> ID (PBKDF2)
-ID_TRACK_FILE  = DATA_DIR / "used_ids.txt"                  # lista zauzetih ID-jeva (plain intovi)
+VALID_PINS_FILE = DATA_DIR / "valid_registration_pins.txt"  # one-time registration PINs (HMAC)
+PIN_TO_ID_FILE = DATA_DIR / "pin_to_id_map.txt"             # user PIN -> ID (PBKDF2)
+ID_TRACK_FILE  = DATA_DIR / "used_ids.txt"                  # list of occupied IDs (plain ints)
 
-# --------- FS sigurnost / pomoćne ---------
+# File-system security helpers 
 def _umask_secure() -> None:
     os.umask(0o077)
 
@@ -62,12 +62,12 @@ def _locked_read_modify_write(p: Path, modifier: Callable[[list[str]], list[str]
             fcntl.flock(f, fcntl.LOCK_UN)
     _ensure_file_secure(p)
 
-# --------- Config (admin + tajne) ---------
+# Config (admin + secrets) 
 DEFAULT_CONFIG: Dict[str, object] = {
     "username": "admin",
     "password_hash": hashlib.sha256("admin".encode()).hexdigest(),
     "pepper": None,         # hex string
-    "kdf_iters": 200_000,   # PBKDF2 iteracije
+    "kdf_iters": 200_000,   # PBKDF2 iterations
 }
 
 def _write_cfg(cfg: dict) -> None:
@@ -83,7 +83,7 @@ def ensure_config_exists() -> None:
         cfg["pepper"] = secrets.token_hex(32)  # 256-bit
         _write_cfg(cfg)
     else:
-        # samo osiguraj da postoje polja pepper/kdf_iters
+        # ensure pepper/kdf_iters fields exist
         with open(CONFIG_FILE, "r") as f:
             cfg = json.load(f)
         changed = False
@@ -110,10 +110,10 @@ def save_config(data: dict) -> None:
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
-# --------- Kripto helperi ---------
+# Crypto helpers 
 def _pepper_bytes() -> bytes:
     cfg = load_config()
-    return bytes.fromhex(cfg["pepper"])  # type: ignore[arg-type]
+    return bytes.fromhex(cfg["pepper"])  
 
 def hmac_pin(pin: str) -> str:
     return hmac.new(_pepper_bytes(), pin.encode(), hashlib.sha256).hexdigest()
@@ -126,7 +126,7 @@ def _pbkdf2_pin(pin: str, salt_hex: str) -> str:
     )
     return dk.hex()
 
-# --------- Init sigurnosnog okruženja ---------
+# Initialize secure environment 
 def security_init() -> None:
     _umask_secure()
     _ensure_dir_secure(DATA_DIR)
@@ -141,9 +141,8 @@ def get_paths() -> Dict[str, str]:
         "id_track_file": str(ID_TRACK_FILE),
     }
 
-# --------- Registracijski PIN-ovi (one-time, HMAC) ---------
+# Registration PINs (one-time, HMAC) 
 def generate_registration_pin() -> str:
-    """Generira 4-znamenkasti PIN, sprema HMAC(pin) i vraća čisti PIN za prikaz."""
     existing = _read_hmac_tokens()
     for _ in range(10_000):
         pin = f"{secrets.randbelow(10_000):04d}"
@@ -151,10 +150,9 @@ def generate_registration_pin() -> str:
         if token not in existing:
             _atomic_append(VALID_PINS_FILE, f"{token}|{_now()}\n")
             return pin
-    raise RuntimeError("Nije moguće generirati PIN.")
+    raise RuntimeError("Unable to generate a PIN.")
 
 def consume_registration_pin(entered_pin: str) -> bool:
-    """Ako postoji HMAC(entered_pin), izbriši zapis i vrati True."""
     token_hmac = hmac_pin(entered_pin).lower()
 
     def _mod(lines: list[str]) -> list[str]:
@@ -166,12 +164,12 @@ def consume_registration_pin(entered_pin: str) -> bool:
                 removed = True
                 continue
             kept.append(ln)
-        _mod.removed = removed  # type: ignore[attr-defined]
+        _mod.removed = removed  
         return kept
 
-    _mod.removed = False  # type: ignore[attr-defined]
+    _mod.removed = False  
     _locked_read_modify_write(VALID_PINS_FILE, _mod)
-    return bool(_mod.removed)  # type: ignore[attr-defined]
+    return bool(_mod.removed)  
 
 def _read_hmac_tokens() -> Set[str]:
     tokens: Set[str] = set()
@@ -183,9 +181,8 @@ def _read_hmac_tokens() -> Set[str]:
                     tokens.add(tok.lower())
     return tokens
 
-# --------- Korisnički PIN-ovi (PBKDF2) ---------
+# User PINs (PBKDF2) 
 def is_user_pin_taken(raw_pin: str) -> bool:
-    """Provjera zauzetosti PIN-a (samo PBKDF2 zapisi)."""
     if not PIN_TO_ID_FILE.exists():
         return False
     with open(PIN_TO_ID_FILE, "r") as f:
@@ -201,18 +198,16 @@ def is_user_pin_taken(raw_pin: str) -> bool:
     return False
 
 def add_user_pin(user_id: int, raw_pin: str) -> None:
-    """Spremi PIN za ID koristeći PBKDF2-HMAC-SHA256 + salt + pepper (točno 4 znamenke)."""
     if not (raw_pin.isdigit() and len(raw_pin) == 4):
-        raise ValueError("PIN mora imati točno 4 znamenke.")
+        raise ValueError("PIN must be exactly 4 digits.")
     if is_user_pin_taken(raw_pin):
-        raise ValueError("Taj PIN je već zauzet. Odaberite drugi.")
+        raise ValueError("That PIN is already taken. Choose a different one.")
     salt_hex = secrets.token_hex(16)
     hash_hex = _pbkdf2_pin(raw_pin, salt_hex)
     token = f"p2:{salt_hex}:{hash_hex}"
     _atomic_append(PIN_TO_ID_FILE, f"{token}|{int(user_id)}|{_now()}\n")
 
 def get_id_for_entered_pin(raw_pin: str) -> Optional[int]:
-    """Vrati ID za uneseni PIN (PBKDF2 format), ili None."""
     if not PIN_TO_ID_FILE.exists():
         return None
     with open(PIN_TO_ID_FILE, "r") as f:
@@ -233,7 +228,6 @@ def get_id_for_entered_pin(raw_pin: str) -> Optional[int]:
     return None
 
 def remove_pins_for_id(user_id: int) -> int:
-    """Obriši sve PIN zapise za dani ID. Vrati broj obrisanih."""
     uid = int(user_id)
     def _mod(lines: list[str]) -> list[str]:
         kept: list[str] = []
@@ -244,16 +238,16 @@ def remove_pins_for_id(user_id: int) -> int:
                 removed += 1
                 continue
             kept.append(ln)
-        _mod.removed = removed  # type: ignore[attr-defined]
+        _mod.removed = removed  
         return kept
-    _mod.removed = 0  # type: ignore[attr-defined]
+    _mod.removed = 0  
     _locked_read_modify_write(PIN_TO_ID_FILE, _mod)
-    return int(_mod.removed)  # type: ignore[attr-defined]
+    return int(_mod.removed)  
 
 def wipe_all_user_pins() -> None:
     _locked_read_modify_write(PIN_TO_ID_FILE, lambda _lines: [])
 
-# --------- Lista ID-jeva ---------
+# ID list 
 def ids_list() -> Set[int]:
     if not ID_TRACK_FILE.exists():
         return set()
@@ -272,6 +266,6 @@ def ids_delete(finger_id: int) -> None:
 def ids_clear() -> None:
     _locked_read_modify_write(ID_TRACK_FILE, lambda _lines: [])
 
-# --------- Utility ---------
+# Utility 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
